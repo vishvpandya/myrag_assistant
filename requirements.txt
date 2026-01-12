@@ -1,0 +1,48 @@
+# python-dotenv
+# streamlit
+# unstructured
+# tiktoken
+# langchain-chroma
+# langchain-groq
+# langchain-community
+# protobuf
+# langchain-huggingface
+# langchain
+
+
+# pip install \
+# langchain==0.2.16 
+# langchain-core==0.2.39 
+# langchain-community==0.2.16 
+# langchain-groq==0.1.9 
+# langchain-huggingface==0.0.3
+
+
+
+
+# pip install \
+langchain==0.2.16 
+langchain-core==0.2.39 
+langchain-community==0.2.16 
+langchain-text-splitters==0.2.4 
+langchain-chroma==0.1.4 
+langchain-groq==0.1.9 
+langchain-huggingface==0.0.3
+
+
+langchain_community.document_loaders
+
+# langchain
+# langchain-community
+# langchain-text-splitters
+# langchain-chroma
+# langchain-groq
+# langchain-huggingface
+
+# chromadb
+# huggingface-hub
+# python-dotenv
+# unstructured
+# requests
+# protobuf
+# pydantic
