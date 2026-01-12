@@ -1,22 +1,28 @@
-
 from uuid import uuid4
-from dotenv import load_dotenv
 from pathlib import Path
+import os
 
-from langchain.chains import RetrievalQAWithSourcesChain
+from dotenv import load_dotenv
+
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.chains import RetrievalQA
+from langchain.prompts import PromptTemplate
 
 from langchain_community.document_loaders import (
     UnstructuredURLLoader,
     PyPDFLoader,
-    UnstructuredFileLoader
+    UnstructuredFileLoader,
 )
 
 from langchain_chroma import Chroma
 from langchain_groq import ChatGroq
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 
+# ---------------- LOAD ENV ---------------- #
 load_dotenv()
+
+if not os.getenv("GROQ_API_KEY"):
+    raise RuntimeError("❌ GROQ_API_KEY not found. Add it to .env file.")
 
 # ---------------- CONSTANTS ---------------- #
 CHUNK_SIZE = 1000
@@ -41,43 +47,47 @@ def initialize_components():
         llm = ChatGroq(
             model="llama-3.3-70b-versatile",
             temperature=0.3,
-            max_tokens=500
+            max_tokens=500,
         )
 
     if vector_store is None:
         embeddings = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL,
-            model_kwargs={"trust_remote_code": True}
+            model_name=EMBEDDING_MODEL
         )
 
         vector_store = Chroma(
             collection_name=COLLECTION_NAME,
             embedding_function=embeddings,
-            persist_directory=str(VECTORSTORE_DIR)
+            persist_directory=str(VECTORSTORE_DIR),
         )
 
 
 def process_documents(urls=None, files=None):
     """
-    Process URLs and/or uploaded files and store embeddings in vector DB
+    Load URLs and/or files → chunk → embed → store in vector DB
     """
-    yield "Initializing components..."
     initialize_components()
 
-    yield "Resetting vector store...✅"
+    yield "🔄 Resetting vector database..."
     vector_store.reset_collection()
 
     documents = []
 
-    # -------- Load URLs -------- #
+    # -------- URL LOADING -------- #
     if urls:
-        yield "Loading data from URLs...🌐"
-        url_loader = UnstructuredURLLoader(urls=urls)
-        documents.extend(url_loader.load())
+        yield "🌐 Loading data from URLs..."
+        try:
+            loader = UnstructuredURLLoader(
+                urls=urls,
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+            documents.extend(loader.load())
+        except Exception:
+            yield "⚠️ Failed to load one or more URLs."
 
-    # -------- Load Files -------- #
+    # -------- FILE LOADING -------- #
     if files:
-        yield "Loading data from uploaded files...📄"
+        yield "📄 Loading uploaded files..."
         temp_dir = BASE_DIR / "temp"
         temp_dir.mkdir(exist_ok=True)
 
@@ -85,7 +95,7 @@ def process_documents(urls=None, files=None):
             file_path = temp_dir / file.name
             file_path.write_bytes(file.read())
 
-            if file.name.endswith(".pdf"):
+            if file.name.lower().endswith(".pdf"):
                 loader = PyPDFLoader(str(file_path))
             else:
                 loader = UnstructuredFileLoader(str(file_path))
@@ -93,35 +103,62 @@ def process_documents(urls=None, files=None):
             documents.extend(loader.load())
 
     if not documents:
-        yield "No documents found ❌"
+        yield "❌ No documents found."
+        yield "👉 Tip: Upload PDFs for documentation websites."
         return
 
-    # -------- Chunking -------- #
-    yield "Splitting text into chunks...✂️"
+    # -------- SPLITTING -------- #
+    yield "✂️ Splitting documents into chunks..."
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP
+        chunk_overlap=CHUNK_OVERLAP,
     )
     chunks = splitter.split_documents(documents)
 
-    # -------- Store Embeddings -------- #
-    yield "Adding chunks to vector database...🧠"
+    # -------- STORE -------- #
+    yield "🧠 Storing embeddings in vector database..."
     ids = [str(uuid4()) for _ in chunks]
     vector_store.add_documents(chunks, ids=ids)
 
-    yield "✅ Processing completed successfully!"
+    yield "✅ Data processing completed!"
 
 
-def generate_answer(query: str):
+def generate_answer(question: str):
     if vector_store is None:
-        raise RuntimeError("Vector database not initialized")
+        raise RuntimeError("Vector store not initialized.")
 
-    chain = RetrievalQAWithSourcesChain.from_llm(
-        llm=llm,
-        retriever=vector_store.as_retriever()
+    prompt = PromptTemplate(
+        template="""
+You MUST answer the question using ONLY the context below.
+If the answer is not in the context, say:
+"I don't know based on the provided documents."
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+""",
+        input_variables=["context", "question"],
     )
 
-    result = chain.invoke({"question": query}, return_only_outputs=True)
+    chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        retriever=vector_store.as_retriever(
+            search_type="mmr",
+            search_kwargs={"k": 5, "fetch_k": 15},
+        ),
+        chain_type_kwargs={"prompt": prompt},
+        return_source_documents=True,
+    )
 
-    return result["answer"], result.get("sources", "")
+    result = chain.invoke({"query": question})
 
+    sources = set()
+    for doc in result["source_documents"]:
+        if "source" in doc.metadata:
+            sources.add(doc.metadata["source"])
+
+    return result["result"], list(sources)
